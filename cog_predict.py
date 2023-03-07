@@ -4,6 +4,8 @@
 # push: cog push r8.im/tencentarc/gfpgan
 # push (backup): cog push r8.im/xinntao/gfpgan
 
+
+# ~1GB of weights
 import os
 
 import cv2
@@ -14,6 +16,14 @@ from basicsr.archs.srvgg_arch import SRVGGNetCompact
 from gfpgan import GFPGANer
 from cog import BasePredictor, Input, Path
 from realesrgan.utils import RealESRGANer
+
+IMG_EXTENSIONS = {'jpg', 'jpeg', 'png', 'gif', 'tiff'}
+
+def get_extension(path):
+    pot_ext = os.path.splitext(os.path.basename(str(path)))[-1]
+    if pot_ext in IMG_EXTENSIONS:
+        return pot_ext
+    return 'png'
 
 class Predictor(BasePredictor):
 
@@ -40,36 +50,33 @@ class Predictor(BasePredictor):
     ) -> Path:
         weight = 0.5
         print(img, scale, weight)
-        try:
-            extension = os.path.splitext(os.path.basename(str(img)))[1]
-            img = cv2.imread(str(img), cv2.IMREAD_UNCHANGED)
-            if len(img.shape) == 3 and img.shape[2] == 4:
-                img_mode = 'RGBA'
-            elif len(img.shape) == 2:
-                img_mode = None
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-            else:
-                img_mode = None
+        extension = get_extension(img)
+        img = cv2.imread(str(img), cv2.IMREAD_UNCHANGED)
+        if len(img.shape) == 3 and img.shape[2] == 4:
+            img_mode = 'RGBA'
+        elif len(img.shape) == 2:
+            img_mode = None
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        else:
+            img_mode = None
 
-            h, w = img.shape[0:2]
-            if h < 300:
-                img = cv2.resize(img, (w * 2, h * 2), interpolation=cv2.INTER_LANCZOS4)
-
+        h, w = img.shape[0:2]
+        if h < 300:
+            img = cv2.resize(img, (w * 2, h * 2), interpolation=cv2.INTER_LANCZOS4)
+        
+        with torch.inference_mode() and torch.autocast('cuda'):
             _, _, output = self.face_enhancer.enhance(
                 img, has_aligned=False, only_center_face=False, paste_back=True, weight=weight)
 
-            if scale != 2:
-                interpolation = cv2.INTER_AREA if scale < 2 else cv2.INTER_LANCZOS4
-                h, w = img.shape[0:2]
-                output = cv2.resize(output, (int(w * scale / 2), int(h * scale / 2)), interpolation=interpolation)
+        if scale != 2:
+            interpolation = cv2.INTER_AREA if scale < 2 else cv2.INTER_LANCZOS4
+            h, w = img.shape[0:2]
+            output = cv2.resize(output, (int(w * scale / 2), int(h * scale / 2)), interpolation=interpolation)
 
-            if img_mode == 'RGBA':  # RGBA images should be saved in png format
-                extension = 'png'
-            out_path = Path(tempfile.mkdtemp()) / f'out.{extension}'
-            cv2.imwrite(str(out_path), output)
-        except Exception as e:
-            print('global exception: ', e)
-            raise e
+        if img_mode == 'RGBA':  # RGBA images should be saved in png format
+            extension = 'png'
+        out_path = Path(tempfile.mkdtemp()) / f'out.{extension}'
+        cv2.imwrite(str(out_path), output)
         return out_path
 
 
